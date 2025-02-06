@@ -1,6 +1,6 @@
 # Migration_Scripts
 Python and Powershell scripts used for migration.
-
+________________________________________________________________________________________________________________________________________________________________________________________________
 Python Scripts
 These scripts are used to fetch data from gsuite.
 
@@ -18,3 +18,12 @@ for the above two files prepare the input file which would be from the migration
 File_Finder.py use this script to get the location of a file or multiple files in gsuite. the input file should have fileowner email in column 1, and file id in column 2. Nothing to change in the code.
 
 PullUniquePermissionsReport_Latest.py is used to get all the files with unique permissions of a drive in a single or multiple users. just create an input file with emails of users without a header and run the script.
+________________________________________________________________________________________________________________________________________________________________________________________________
+
+PowerShell Scripts
+
+These are the scripts used to manage SharePoint/OneDrive environments during migration. 
+
+All these scripts are labelled and have information about input files in the code. 
+
+please change the extension of these files from .txt to .ps1 and run the scripts. 
