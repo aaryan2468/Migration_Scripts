@@ -1,0 +1,51 @@
+# Get Credentials
+$Credentials = Get-Credential
+
+# Config Variables
+$TenantSiteURL = "https://infoblox-admin.sharepoint.com/"
+
+# Connect to PnP Online using credentials
+Connect-PnPOnline -Url $TenantSiteURL -Credentials $Credentials
+
+# Read users' email addresses from CSV file
+$Users = Import-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\testingonedrives.csv"
+
+# Array to hold usage data
+$UsageData = @()
+
+# Iterate through each user and create OneDrive for Business site
+foreach ($User in $Users) {
+    $UserEmail = $User.Email -replace '@','_' -replace '\.','_'
+
+    # Construct the URL to check if OneDrive exists
+    $oneDriveUrl = "https://infoblox-my.sharepoint.com/personal/$UserEmail"
+
+    # Check if the OneDrive already exists
+    $oneDrive = Get-PnPTenantSite -Url $oneDriveUrl -ErrorAction SilentlyContinue
+    if ($oneDrive -eq $null) {
+        Write-Host "OneDrive does not exist for $UserEmail at $oneDriveUrl" -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "OneDrive already exists for $UserEmail at $oneDriveUrl" -ForegroundColor Green
+        
+        # Collect OneDrive usage data
+        $Site = Get-PnPTenantSite -Url $oneDriveUrl
+        $UsageData += [PSCustomObject]@{
+            SiteName         = $Site.Title
+            URL              = $Site.Url
+            Owner            = $Site.Owner
+            UsedSpaceMB      = $Site.StorageUsageCurrent
+            AllocatedSpaceGB = [Math]::Round($Site.StorageQuota/1024,2)
+            LastUsed         = $Site.LastContentModifiedDate
+        }
+    }
+}
+
+# Output usage data
+$UsageData | Format-Table -AutoSize
+
+# Export usage data to CSV file
+$UsageData | Export-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Checking onedrive exists or not with sizes.csv" -NoTypeInformation
+
+# Disconnect from PnP Online
+Disconnect-PnPOnline

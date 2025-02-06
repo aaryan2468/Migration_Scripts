@@ -1,0 +1,88 @@
+# Import the CSV file
+$data = Import-Csv "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Wave3_Search&Find_SD.csv"
+$ListName = "Shared Documents"
+$PermissionResults = @()
+
+# Prompt for credentials once
+$credentials = Get-Credential
+
+try {
+    foreach ($row in $data) {
+        $SiteURL = $row.SiteURL
+        $FolderPath = $row.Path -replace "SharedDrives",""
+        $UserAccount = "c:0-.f|rolemanager|spo-grid-all-users/ccf6dc4a-9fe9-4c20-85a6-46d2709e8435"
+        $PermissionLevel = $row.Permission # Assigning PermissionLevel from CSV
+
+        try {
+            # Connect to the SharePoint site using the credentials
+            Connect-PnPOnline -Url $SiteURL -Credentials $credentials
+
+            $Path = $ListName.Trim('/') + '/' + $FolderPath.Trim('/')
+            $Fullpath = $SiteURL.TrimEnd('/') + '/' + $ListName.Trim('/') + '/' + $FolderPath.Trim('/') 
+
+            Write-Host "$($Fullpath)" -ForegroundColor cyan
+
+            if ($PermissionLevel -eq "Viewer" -or $PermissionLevel -eq "Commenter") {
+                $Role = 'Read'
+            } elseif ($PermissionLevel -eq "Editor") {
+                $Role = 'Edit'
+            } else {
+                $Role = 'Read'
+            }
+
+            if ($FolderPath -match "\.\w+$") {
+                $ItemRelativeURL = $Path
+                $Item = Get-PnPFile -Url $ItemRelativeURL -ErrorAction Stop
+                Set-PnPListItemPermission -List $ListName -Identity $Item.ListItemAllFields -User $UserAccount -AddRole $Role
+                $PermissionResults += [PSCustomObject]@{
+                    ItemPath = $Path
+                    FullPath = $Fullpath
+                    ItemType = "File"
+                    PermissionLevel = $PermissionLevel
+                    PermissionGranted = "Yes"
+                }
+                Write-Host "File permission-$($PermissionLevel) granted to $UserAccount for: $Path" -ForegroundColor Yellow
+            } else {
+                $ItemRelativeURL = $Path
+                $Item = Get-PnPFolder -Url $ItemRelativeURL -ErrorAction Stop
+                Set-PnPListItemPermission -List $ListName -Identity $Item.ListItemAllFields -User $UserAccount -AddRole $Role
+                $PermissionResults += [PSCustomObject]@{
+                    ItemPath = $Path
+                    FullPath = $Fullpath
+                    ItemType = "Folder"
+                    PermissionLevel = $PermissionLevel
+                    PermissionGranted = "Yes"
+                }
+                Write-Host "Folder permission-$($PermissionLevel) granted to $UserAccount for: $Path" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "Error: $_"
+            $ErrorMessage = $_.Exception.Message
+            if ($ErrorMessage -match "404") {
+                $PermissionResults += [PSCustomObject]@{
+                    ItemPath = $Path
+                    FullPath = $Fullpath
+                    ItemType = if ($FolderPath -match "\.\w+$") { "File" } else { "Folder" }
+                    PermissionLevel = $PermissionLevel
+                    PermissionGranted = "Path not found"
+                    ErrorMessage = "Path not found"
+                }
+            } else {
+                $PermissionResults += [PSCustomObject]@{
+                    ItemPath = $Path
+                    FullPath = $Fullpath
+                    ItemType = if ($FolderPath -match "\.\w+$") { "File" } else { "Folder" }
+                    PermissionLevel = $PermissionLevel
+                    PermissionGranted = "No"
+                    ErrorMessage = $ErrorMessage
+                }
+            }
+        }
+    }
+
+    $OutputCSVFile = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\wave3Shareddrivesearchandfind.csv"
+    $PermissionResults | Export-Csv -Path $OutputCSVFile -NoTypeInformation -Force
+    Write-Host "Permission results exported to $OutputCSVFile" -ForegroundColor Cyan
+} catch {
+    Write-Host "Error: $_"
+}

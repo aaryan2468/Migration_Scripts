@@ -1,0 +1,50 @@
+# Define the SharePoint Admin URL and the paths to the CSV files
+$adminUrl = "https://infoblox-admin.sharepoint.com" # Update this with your SharePoint admin URL
+$inputCsvPath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\All onedrives input file.csv"  # Path to the CSV file containing site URLs
+$outputCsvPath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\all_onedrives_created_date_exports.csv" # Path to the output CSV file
+
+# Prompt for credentials once and store them in a variable
+$credential = Get-Credential
+
+# Read the site URLs from the CSV file
+$siteUrls = Import-Csv -Path $inputCsvPath
+
+# Initialize an empty array to hold the results
+$results = @()
+
+# Connect to SharePoint Online Admin Center with the credentials
+Connect-PnPOnline -Url $adminUrl -Credentials $credential
+
+# Loop through each site URL and retrieve its creation date
+foreach ($siteUrl in $siteUrls) {
+    try {
+        # Connect to each site URL with the same credentials
+        Connect-PnPOnline -Url $siteUrl.URL -Credentials $credential
+        Start-Sleep -Seconds 5
+
+        # Get the root web and its creation date
+        $web = Get-PnPWeb -Includes Created
+
+        # Create an object with site URL and creation date
+        $siteInfo = [PSCustomObject]@{
+            URL         = $siteUrl.URL
+            CreatedDate = $web.Created
+        }
+
+        # Add the object to the results array
+        $results += $siteInfo
+
+        # Display the URL and creation date in the console
+        Write-Host "URL: $($siteUrl.URL) | Created Date: $($web.Created)"
+    } catch {
+        Write-Host "Error retrieving site properties for $($siteUrl.URL): $_" -ForegroundColor Red
+    } finally {
+        # Disconnect from each site URL
+        Disconnect-PnPOnline
+    }
+}
+
+# Export the results to a CSV file
+$results | Export-Csv -Path $outputCsvPath -NoTypeInformation
+
+Write-Host "Site properties have been exported to $outputCsvPath"

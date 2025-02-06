@@ -1,0 +1,20 @@
+# Connect to the SharePoint Online Admin Center
+$adminUrl = "https://infoblox-admin.sharepoint.com"
+Connect-PnPOnline -Url $adminUrl -Interactive
+
+# Get all OneDrive site collections
+$oneDriveSites = Get-PnPTenantSite -IncludeOneDriveSites
+
+# Prepare the results
+$results = foreach ($site in $oneDriveSites) {
+    [PSCustomObject]@{
+        URL            = $site.Url
+        ProvisionDate  = $site.Created
+    }
+}
+
+# Output results to a CSV file
+$results | Export-Csv -Path "OneDrive_Sites_List.csv" -NoTypeInformation
+
+# Disconnect the session
+Disconnect-PnPOnline

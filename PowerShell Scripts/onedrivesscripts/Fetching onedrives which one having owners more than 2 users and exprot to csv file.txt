@@ -1,0 +1,67 @@
+# Load the PnP PowerShell module
+# Import-Module PnP.PowerShell
+
+# Connect to SharePoint Online
+$tenantAdminUrl = "https://infoblox-admin.sharepoint.com"
+$credential = Get-Credential
+
+Connect-PnPOnline -Url $tenantAdminUrl -Credentials $credential
+
+# Function to get site collection admins
+function Get-SiteCollectionAdmins {
+    param (
+        [string]$siteUrl
+    )
+
+    # Connect to the site collection
+    Connect-PnPOnline -Url $siteUrl -Credentials $credential
+
+    # Get site users
+    $users = Get-PnPUser
+
+    # Filter users who are site collection admins
+    $admins = $users | Where-Object { $_.IsSiteAdmin -eq $true }
+
+    return $admins
+}
+
+# Path to the CSV file containing OneDrive site URLs
+$csvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\wave2OneDriveSites.csv"
+
+# Import the CSV file
+$oneDriveSites = Import-Csv -Path $csvFilePath
+
+# Array to store OneDrive sites with more than three admins
+$oneDriveWithMoreThanThreeAdmins = @()
+
+# Loop through each OneDrive site and check for admins
+foreach ($site in $oneDriveSites) {
+    $siteUrl = $site.SiteUrl
+    Write-Host "Checking site: $siteUrl"
+    
+    # Get site collection admins
+    $admins = Get-SiteCollectionAdmins -siteUrl $siteUrl
+    
+    if ($admins.Count -gt 2) {
+        $oneDriveWithMoreThanThreeAdmins += [PSCustomObject]@{
+            Url = $siteUrl
+            AdminCount = $admins.Count
+            Admins = ($admins | Select-Object -Property Title, LoginName) -join ", "
+        }
+        Write-Host "$siteUrl url having more than 2 admins" -ForegroundColor Yellow
+    }
+}
+
+# Output the OneDrive sites with more than three admins to the console
+$oneDriveWithMoreThanThreeAdmins | Format-Table -AutoSize
+
+# Path to the output CSV file
+$outputCsvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\OneDriveSitesWithMoreThanThreeAdmins.csv"
+
+# Export the OneDrive sites with more than three admins to a CSV file
+$oneDriveWithMoreThanThreeAdmins | Export-Csv -Path $outputCsvFilePath -NoTypeInformation
+
+# Disconnect from SharePoint Online
+Disconnect-PnPOnline
+
+Write-Host "Process completed. Output saved to $outputCsvFilePath"

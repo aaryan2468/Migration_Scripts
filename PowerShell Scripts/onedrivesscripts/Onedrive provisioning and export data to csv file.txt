@@ -1,0 +1,66 @@
+# Set your admin credentials
+$TenantSiteURL = "https://infoblox-admin.sharepoint.com/"
+
+# Connect to PnP Online
+Connect-PnPOnline -Url $TenantSiteURL -UseWebLogin
+
+$AdminUsername = "sharepoint.admin6@infoblox.com"
+$AdminPassword = ConvertTo-SecureString "Peddaupparapalli@3636" -AsPlainText -Force
+$Credential = New-Object System.Management.Automation.PSCredential ($AdminUsername, $AdminPassword)
+
+# Connect to Exchange Online
+#Connect-ExchangeOnline -Credential $Credential
+
+# Path to your CSV file
+$CSVFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\newonedrives-11-04-2024.csv"
+
+# Read the CSV file
+$Users = Import-Csv $CSVFilePath
+
+# Create an array to store results
+$Results = @()
+
+# Iterate through each user and provision OneDrive
+foreach ($User in $Users) {
+    $EmailAddress = $User.Email
+    $Alias = $EmailAddress -replace '@','_' -replace '\.','_'
+    $url = "https://infoblox-my.sharepoint.com/personal/$Alias"
+
+    # Check if OneDrive already exists
+    $oneDrive = Get-PnPTenantSite -Url $url -ErrorAction SilentlyContinue
+
+    if ($oneDrive -ne $null) {
+        $result = [PSCustomObject]@{
+            Email = $EmailAddress
+            Status = "OneDrive already exists"
+            URL = $url
+        }
+        Write-Host "OneDrive for Business site already exists for $EmailAddress URL-$url"-ForegroundColor Yellow
+    } else {
+        # Provision OneDrive for the user
+        try {
+            New-PnPPersonalSite -Email $EmailAddress -ErrorAction Stop
+            $result = [PSCustomObject]@{
+                Email = $EmailAddress
+                Status = "OneDrive created successfully"
+                URL = $url
+            }
+            Write-Host "OneDrive for Business site created for $EmailAddress URL: $url" -ForegroundColor Green
+        } catch {
+            $result = [PSCustomObject]@{
+                Email = $EmailAddress
+                Status = "Failed to provision OneDrive"
+                Error = $_.Exception.Message
+            }
+            Write-Host "Failed to provision OneDrive for $EmailAddress"
+            Write-Host $_.Exception.Message -ForegroundColor Red
+        }
+    }
+    $Results += $result
+}
+
+# Export results to CSV
+$Results | Export-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\ProvisioningResults.csv" -NoTypeInformation
+
+# Disconnect Exchange Online session
+#Disconnect-ExchangeOnline -Confirm:$false

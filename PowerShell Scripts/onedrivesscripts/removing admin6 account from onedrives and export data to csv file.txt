@@ -1,0 +1,60 @@
+# Install PnP PowerShell module if not installed
+if (-not (Get-Module -Name SharePointPnPPowerShellOnline -ListAvailable)) {
+    Install-Module -Name SharePointPnPPowerShellOnline -Force -AllowClobber -Scope CurrentUser
+}
+
+# Import the module
+Import-Module SharePointPnPPowerShellOnline -DisableNameChecking
+
+# Prompt for credentials
+$credentials = Get-Credential
+
+# Read data from CSV file containing site URLs
+$csvData = Import-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\ITOnedriveslist.csv"
+
+# Specify the user to be removed as site collection administrator
+$adminToRemove = "sharepoint.admin6@infoblox.com"
+
+# Initialize an array to store the results
+$results = @()
+
+# Loop through each site URL and remove the specified user as site collection administrator
+foreach ($row in $csvData) {
+    $siteUrl = $row.SiteUrl
+    Write-Host "Removing $adminToRemove as site collection administrator from $siteUrl" -ForegroundColor Yellow
+    try {
+        # Connect to the site using provided credentials
+        Connect-PnPOnline -Url $siteUrl -Credentials $credentials -ErrorAction Stop
+        
+        # Check if connection is successful before removing admin
+        if (Get-PnPConnection) {
+            Remove-PnPSiteCollectionAdmin -Owners $adminToRemove -ErrorAction Stop
+            Write-Host "Removed $adminToRemove as site collection administrator from $siteUrl" -ForegroundColor Green
+            $results += [PSCustomObject]@{
+                SiteUrl   = $siteUrl
+                Status    = "Success"
+                Message   = "Removed $adminToRemove"
+            }
+        } else {
+            Write-Host "Failed to connect to $siteUrl" -ForegroundColor Red
+            $results += [PSCustomObject]@{
+                SiteUrl   = $siteUrl
+                Status    = "Failed"
+                Message   = "Failed to connect"
+            }
+        }
+    } catch {
+        Write-Host "Error occurred: $_" -ForegroundColor Red
+        $results += [PSCustomObject]@{
+            SiteUrl   = $siteUrl
+            Status    = "Error"
+            Message   = $_.Exception.Message
+        }
+    } finally {
+        Disconnect-PnPOnline -ErrorAction SilentlyContinue
+    }
+}
+
+# Export results to CSV file
+$results | Export-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Results.csv" -NoTypeInformation
+

@@ -1,0 +1,218 @@
+$siteUrl = "https://infoblox.sharepoint.com/"
+$csvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Sharepoint Wave 1 Test.csv"
+$OutputCSVFile = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\RemovingEEEGandsharelinksoutputresults.csv"
+
+$csvData = Import-Csv -Path $csvFilePath
+$OutputData = @()
+$ProcessedLinks = New-Object 'System.Collections.Generic.HashSet[System.String]'
+
+# Iterate through each row in the CSV
+foreach ($row in $csvData) {
+    $site = $row.Url
+    $filePath = $row.Path
+    $userName = $row.'User Name'
+    $linkid = $row.'Link ID'
+    $Type = $row.'Item Type'
+
+    try {
+        Connect-PnPOnline -Url $site -Interactive -ClientId "50ed8f53-77fe-4e19-bd08-c4f12bdafb29" -ErrorAction SilentlyContinue
+
+        $fullFilePath = [System.IO.Path]::Combine($siteUrl.Replace("\", "/"), $filePath.Replace("\", "/")).Replace("\", "/")
+        $onedrivepath = $siteUrl + $filePath
+
+        $ListItem = $null
+        $ItemType = ""
+
+        if ($Type -eq "web") {
+            $ItemType = "Web"
+            if ($userName -eq "Everyone except external users") {
+                $UserId = "c:0-.f|rolemanager|spo-grid-all-users/ccf6dc4a-9fe9-4c20-85a6-46d2709e8435"
+                try {
+                    Remove-PnPUser -Identity $UserId -Force -ErrorAction Stop
+                    Write-Host "Removed group '$UserId' from site '$site'!" -ForegroundColor Green
+                    $OutputData += [PSCustomObject]@{
+                        Path        = $filePath
+                        Onedriveurl = $onedrivepath
+                        ItemType    = $ItemType
+                        Group       = $UserId
+                        Type        = $userName
+                        Status      = "Group removed from site"
+                        LinkId      = $linkid
+                    }
+                } catch {
+                    Write-Host "Failed to remove group '$UserId' from site '$site': $_" -ForegroundColor Red
+                    $OutputData += [PSCustomObject]@{
+                        Path         = $filePath
+                        Onedriveurl  = $onedrivepath
+                        ItemType     = $ItemType
+                        Group        = $UserId
+                        Type         = $userName
+                        Status       = "Failed to remove group from site"
+                        LinkId       = $linkid
+                        ErrorMessage = $_.Exception.Message
+                    }
+                }
+            }
+        } else {
+            if ($Type -match "Folder") {
+                $Folder = Get-PnPFolder -Url $fullFilePath
+                if ($Folder) {
+                    $ListItem = $Folder.ListItemAllFields
+                    $ItemType = "Folder"
+                }
+            } else {
+                $ListItem = Get-PnPFile -Url "/$filePath" -AsListItem
+                $ItemType = "File"
+            }
+
+            if (-not $ListItem) {
+                Write-Host "$ItemType not found at $fullFilePath" -ForegroundColor Red
+                $OutputData += [PSCustomObject]@{
+                    Path     = $filePath
+                    Onedriveurl = $onedrivepath
+                    ItemType = $ItemType
+                    Group    = ""
+                    Type     = ""
+                    Status   = "$ItemType not found"
+                    LinkId   = $linkid
+                }
+            } else {
+                if ($userName -eq "Everyone except external users") {
+                    $UserId = "c:0-.f|rolemanager|spo-grid-all-users/ccf6dc4a-9fe9-4c20-85a6-46d2709e8435"
+                    $User = Get-PnPUser -Identity $UserId -ErrorAction SilentlyContinue
+
+                    if ($User) {
+                        $RoleAssignments = Get-PnPProperty -ClientObject $ListItem -Property RoleAssignments -ErrorAction SilentlyContinue
+
+                        $UserFound = $false
+                        foreach ($RoleAssignment in $RoleAssignments) {
+                            $Member = Get-PnPProperty -ClientObject $RoleAssignment -Property Member -ErrorAction SilentlyContinue
+                            if ($Member -and $Member.LoginName -eq $User.LoginName) {
+                                $UserFound = $true
+                                try {
+                                    $ListItem.RoleAssignments.GetByPrincipal($User).DeleteObject()
+                                    Invoke-PnPQuery -ErrorAction SilentlyContinue
+                                    Write-Host "Removed user '$UserId' from item '$onedrivepath' permissions!" -ForegroundColor Green
+                                    $OutputData += [PSCustomObject]@{
+                                        Path        = $filePath
+                                        Onedriveurl = $onedrivepath
+                                        ItemType    = $ItemType
+                                        Group       = $UserId
+                                        Type        = $userName
+                                        Status      = "User removed from item permissions"
+                                        LinkId      = $linkid
+                                    }
+                                } catch {
+                                    if ($_.Exception.Message -match "This operation is not allowed on an object that inherits permissions") {
+                                        Write-Host "Cannot remove user '$UserId' from item '$onedrivepath' due to inherited permissions." -ForegroundColor Red
+                                        $OutputData += [PSCustomObject]@{
+                                            Path         = $filePath
+                                            Onedriveurl  = $onedrivepath
+                                            ItemType     = $ItemType
+                                            Group        = $UserId
+                                            Type         = $userName
+                                            Status       = "Cannot remove due to inherited permissions"
+                                            LinkId       = $linkid
+                                            ErrorMessage = $_.Exception.Message
+                                        }
+                                    } else {
+                                        Write-Host "Failed to remove user '$UserId' from item '$onedrivepath' permissions: $_" -ForegroundColor Red
+                                    }
+                                }
+                                break
+                            }
+                        }
+
+                        if (-not $UserFound) {
+                            Write-Host "User '$UserId' not found in item permissions." -ForegroundColor Cyan
+                            $OutputData += [PSCustomObject]@{
+                                Path        = $filePath
+                                Onedriveurl = $onedrivepath
+                                ItemType    = $ItemType
+                                Group       = $UserId
+                                Type        = $userName
+                                Status      = "User not found in item permissions"
+                                LinkId      = $linkid
+                            }
+                        }
+                    } else {
+                        Write-Host "User '$UserId' not found." -ForegroundColor Red
+                        $OutputData += [PSCustomObject]@{
+                            Path        = $filePath
+                            Onedriveurl = $onedrivepath
+                            ItemType    = $ItemType
+                            Group       = $UserId
+                            Type        = $userName
+                            Status      = "User not found"
+                            LinkId      = $linkid
+                        }
+                    }
+                } elseif ($userName -eq "SharingLink") {
+                    try {
+                        if ($ItemType -eq "Folder") {
+                            Remove-PnPFolderSharingLink -Folder "/$filePath" -Identity $linkid -Force
+                        } else {
+                            Remove-PnPFileSharingLink -FileUrl "/$filePath" -Identity $linkid -Force
+                        }
+                        Write-Host "Removed shared link '$linkid' from '$onedrivepath'" -ForegroundColor Yellow
+                        $ProcessedLinks.Add($linkid)
+                        $OutputData += [PSCustomObject]@{
+                            Path        = $filePath
+                            Onedriveurl = $onedrivepath
+                            ItemType    = $ItemType
+                            Group       = ""
+                            Type        = $userName
+                            Status      = "Shared link removed"
+                            LinkId      = $linkid
+                        }
+                    } catch {
+                        if ($_.Exception.Message -match "No sharing links were found for the specified folder") {
+                            Write-Host "Shared link '$linkid' already removed from '$onedrivepath'" -ForegroundColor Cyan
+                            $OutputData += [PSCustomObject]@{
+                                Path        = $filePath
+                                Onedriveurl = $onedrivepath
+                                ItemType    = $ItemType
+                                Group       = ""
+                                Type        = $userName
+                                Status      = "Shared link already removed"
+                                LinkId      = $linkid
+                            }
+                        } else {
+                            Write-Host "Failed to remove shared link '$linkid' from '$onedrivepath': $_" -ForegroundColor Red
+                            $OutputData += [PSCustomObject]@{
+                                Path         = $filePath
+                                Onedriveurl  = $onedrivepath
+                                ItemType     = $ItemType
+                                Group       = ""
+                                Type         = $userName
+                                Status       = "Failed to remove shared link"
+                                LinkId       = $linkid
+                                ErrorMessage = $_.Exception.Message
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        if ($_.Exception.Message -notmatch "Object reference not set to an instance of an object") {
+            Write-Host "Error processing '$fullFilePath': $_" -ForegroundColor Red
+            $OutputData += [PSCustomObject]@{
+                Path         = $filePath
+                Onedriveurl  = $onedrivepath
+                ItemType     = $ItemType
+                Group        = ""
+                Type         = $userName
+                Status       = "Error processing item"
+                LinkId       = $linkid
+                ErrorMessage = $_.Exception.Message
+            }
+        }
+    }
+}
+
+# Export results to CSV
+$OutputData | Export-Csv -Path $OutputCSVFile -NoTypeInformation -Force
+Write-Host "Output has been saved to $OutputCSVFile" -ForegroundColor Green
+
+

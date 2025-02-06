@@ -1,0 +1,73 @@
+# Define path to CSV file containing group information (Site URL)
+$csvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\gettingmsgroupowner.csv"
+
+# Import necessary modules
+Import-Module ExchangeOnlineManagement -Force
+
+# Provide your credentials securely
+$credential = Get-Credential
+
+# Connect to Exchange Online securely using saved credentials
+Connect-ExchangeOnline -Credential $credential
+
+# Logging function
+function Log-Message {
+    param(
+        [string]$Message,
+        [string]$Severity
+    )
+    $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Host "[$TimeStamp][$Severity] $Message"
+}
+
+# Read CSV file
+$groupInfo = Import-Csv -Path $csvFilePath
+
+# Initialize array to store group owners' information
+$groupsOwner = @()
+
+# Get all Microsoft 365 groups
+$allGroups = Get-UnifiedGroup
+
+# Iterate through each row in the CSV data
+foreach ($group in $groupInfo) {
+    # Extract site URL
+    $siteUrl = $group.SiteURL
+    
+    # Find the Microsoft 365 group associated with the site URL
+    $groupName = $allGroups | Where-Object { $_.SharePointSiteUrl -eq $siteUrl }
+
+    if ($groupName) {
+        Log-Message "Group found for site: $siteUrl. Group Name: $($groupName.DisplayName)" "INFO"
+        
+        # Retrieve group owners
+        $groupOwners = Get-UnifiedGroupLinks -Identity $groupName.DisplayName -LinkType Owners
+
+        if ($groupOwners) {
+            foreach ($owner in $groupOwners) {
+                # Capture owner details in a structured way
+                $ownerInfo = [PSCustomObject]@{
+                    SiteURL   = $siteUrl
+                    GroupName = $groupName.DisplayName
+                    Owner     = $owner.PrimarySmtpAddress
+                    OwnerName = $owner.DisplayName
+                }
+                $groupsOwner += $ownerInfo
+                Log-Message "Owner found: $($owner.PrimarySmtpAddress)" "INFO"
+            }
+        } else {
+            Log-Message "No owners found for group: $($groupName.DisplayName)" "WARNING"
+        }
+    } else {
+        Log-Message "No group found for site: $siteUrl" "WARNING"
+    }
+}
+
+# Export the owner information to a CSV file
+$exportFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\GroupOwners.csv"
+$groupsOwner | Export-Csv -Path $exportFilePath -NoTypeInformation
+
+Log-Message "Owner information export completed. Exported to $exportFilePath" "INFO"
+
+# Disconnect from Exchange Online
+Disconnect-ExchangeOnline -Confirm:$false

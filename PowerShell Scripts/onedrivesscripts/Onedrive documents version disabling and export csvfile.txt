@@ -1,0 +1,54 @@
+# Define the path to the CSV file
+$csvPath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Wave4finallistwithallbus.csv"
+
+# Import the CSV file
+$sites = Import-Csv -Path $csvPath
+
+# Store credentials
+$username = "sharepoint.admin6@infoblox.com"
+$password = ConvertTo-SecureString "Peddaupparapalli@3636" -AsPlainText -Force
+$credentials = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $username, $password
+
+# Array to store results
+$results = @()
+
+# Loop through each site in the CSV file
+foreach ($site in $sites) {
+    $result = [PSCustomObject]@{
+        SiteUrl = $site.SiteUrl
+        LibraryName = $site.LibraryName
+        Status = $null
+        ErrorMessage = $null
+    }
+    try {
+        # Connect to the site using stored credentials
+        Connect-PnPOnline $site.SiteUrl -Credentials $credentials
+
+        # Set versioning settings of the List
+        Set-PnPList -Identity $site.LibraryName -EnableVersioning $False
+        Write-Host "Versioning disabled for $($site.SiteUrl) /$($site.LibraryName)."-ForegroundColor Green
+
+        # Set status in result object
+        $result.Status = "Success"
+        $results += $result
+
+        # Write success message to log file
+        $successMessage = "Versioning disabled for $($site.LibraryName) successfully updated."
+        $logFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\versioninglog.txt"
+        Add-Content -Path $logFilePath -Value $successMessage
+    }
+    catch {
+        # If an error occurs, write the error message to a log file
+        $result.ErrorMessage = $_.Exception.Message
+        $results += $result
+
+        $errorMessage = "Error: $($site.LibraryName): $_"
+        $logFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\versioninglog.txt"
+        Add-Content -Path $logFilePath -Value $errorMessage
+    }
+}
+
+# Export results to CSV file
+$results | Export-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\wave4versionningdisabledexportdataLatest.csv" -NoTypeInformation
+Write-Host " Data Exported to csv file successfully"-ForegroundColor Yellow
+

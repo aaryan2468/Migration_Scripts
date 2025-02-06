@@ -1,0 +1,123 @@
+# Parameters
+$csvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Missedonedrivesinputfile.csv"
+$outputCsvPath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\missedonedrivesoutputfile.csv"
+
+function Get-OneDriveFolderItems {
+    param (
+        [Microsoft.SharePoint.Client.Folder]$folder,
+        [Microsoft.SharePoint.Client.ClientContext]$context
+    )
+
+    $context.Load($folder)
+    $context.ExecuteQuery()
+
+    $subfoldersCount = 0
+    $allItemsCount = 0
+    $usedSize = 0
+
+    # Get subfolders count and items count
+    $folders = $folder.Folders
+    $context.Load($folders)
+    $context.ExecuteQuery()
+    $subfoldersCount = $folders.Count
+
+    # Get files count and calculate used size
+    $files = $folder.Files
+    $context.Load($files)
+    $context.ExecuteQuery()
+
+    foreach ($file in $files) {
+        $allItemsCount++
+        $usedSize += $file.Length
+    }
+
+    # Recursively process subfolders
+    foreach ($subfolder in $folders) {
+        $subfolderItems = Get-OneDriveFolderItems -folder $subfolder -context $context
+        $subfoldersCount += $subfolderItems.SubfoldersCount
+        $allItemsCount += $subfolderItems.ItemsCount
+        $usedSize += $subfolderItems.UsedSize
+    }
+
+    return @{
+        SubfoldersCount = $subfoldersCount
+        ItemsCount = $allItemsCount
+        UsedSize = $usedSize
+    }
+}
+
+try {
+    # Read CSV file
+    $csvData = Import-Csv -Path $csvFilePath
+
+    # Initialize an array to store results
+    $results = @()
+
+    # Iterate through each row in CSV
+    foreach ($row in $csvData) {
+        # Set SharePoint credentials
+        $username = "sharepoint.admin6@infoblox.com"
+        $password = "Peddaupparapalli@3636"
+        $siteUrl = $row.siteUrl
+
+        try {
+            # Initialize the client context
+            $context = New-Object Microsoft.SharePoint.Client.ClientContext($siteUrl)
+            $credentials = New-Object Microsoft.SharePoint.Client.SharePointOnlineCredentials($username, (ConvertTo-SecureString $password -AsPlainText -Force))
+            $context.Credentials = $credentials
+
+            # Get the user's OneDrive folder with exponential backoff
+            $exponentialBackoff = 1
+            do {
+                try {
+                    $oneDriveUrl = $context.Web.Url
+                    $oneDriveFolder = $context.Web.GetFolderByServerRelativeUrl("/personal/$($row.user)/Documents/G Data")
+                    $context.Load($oneDriveFolder)
+                    $context.ExecuteQuery()
+                }
+                catch {
+                    $errorCode = $_.Exception.Message.Split(' ')[0]
+                    if ($errorCode -eq "429") {
+                        Write-Host "429 Error: Rate limit exceeded. Retrying in $($exponentialBackoff) seconds..."
+                        Start-Sleep -Seconds $exponentialBackoff
+                        $exponentialBackoff *= 2
+                    }
+                    else {
+                        throw $_.Exception
+                    }
+                }
+            } while ($errorCode -eq "429")
+
+            # Get folder items recursively
+            $folderItems = Get-OneDriveFolderItems -folder $oneDriveFolder -context $context
+
+            # Convert size to GB
+            $usedSizeInGB = $folderItems.UsedSize / 1GB
+
+            # Create a custom object to store the results
+            $result = [PSCustomObject]@{
+                "User" = $row.user
+                "OneDriveURL" = $row.siteUrl
+                "SubfoldersCount" = $folderItems.SubfoldersCount
+                "ItemsCount" = $folderItems.ItemsCount
+                "UsedSize(GB)" = $usedSizeInGB
+                "TotalItems"= $folderItems.ItemsCount + $folderItems.SubfoldersCount
+            }
+
+            # Add the result to the results array
+            $results += $result
+
+            # Output the result to console
+            Write-Host "User: $($result.User), OneDriveURL: $($row.siteUrl), SubfoldersCount: $($result.SubfoldersCount), ItemsCount: $($result.ItemsCount), UsedSize(GB): $($result.'UsedSize(GB)'),TotalItems: $($result.TotalItems)" -ForegroundColor Green
+        } catch {
+            Write-Host "Error occurred for $($row.user): $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    # Export results to CSV file
+    $results | Export-Csv -Path $outputCsvPath -NoTypeInformation
+
+    Write-Host "Data exported to $outputCsvPath" -ForegroundColor Yellow
+} catch {
+    Write-Host "Error occurred: $($_.Exception.Message)" -ForegroundColor Red
+}

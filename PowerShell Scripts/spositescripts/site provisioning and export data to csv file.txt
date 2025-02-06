@@ -1,0 +1,66 @@
+# Parameters
+$CsvPath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\finance64.csv"  # Path to your CSV file
+$ErrorLogPath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\errorlog.txt"  # Path to your error log file
+$OutputCsvPath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\output.csv"  # Path to output CSV file
+
+try {
+    $UserCredential = Get-Credential
+    Connect-PnPOnline -Url "https://infoblox.sharepoint.com/" -Credentials $UserCredential
+
+    $data = Import-Csv -Path $CsvPath
+
+    $results = @() # Array to store results
+
+    foreach ($row in $data) {
+        $Title = $row.Title
+        $Alias = $Title -replace ' ', ''
+        $Url = "https://infoblox.sharepoint.com/sites/$Alias"  # Assuming site URLs are based on the title
+
+        try {
+            $siteExists = Get-SPOSite -Identity $Url -ErrorAction Stop
+            Write-Host "Site already exists: $Url"
+            $result = [PSCustomObject]@{
+                SiteUrl = $Url
+                Status = "Already Exists"
+            }
+        } catch {
+            $aliasExists = Get-PnPTenantSite | Where-Object { $_.Url -eq $Url }
+
+            if ($aliasExists) {
+                Write-Host "Site with URL $Url already exists. Site creation aborted." -ForegroundColor Yellow
+                $result = [PSCustomObject]@{
+                    SiteUrl = $Url
+                    Status = "Already Exists"
+                }
+            } else {
+                try {
+                    New-PnPSite -Type TeamSite -Title $Title -Alias $Alias  -ErrorAction Stop 
+                    Write-Host "Site created successfully: $Url" -ForegroundColor Green
+                    $result = [PSCustomObject]@{
+                        SiteUrl = $Url
+                        Status = "Created Successfully"
+                    }
+                } catch {
+                    $currentTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                    $errorMessage = "$currentTime - Error creating site at $Url : $_"
+                    $errorMessage | Out-File -Append -FilePath $ErrorLogPath
+                    $result = [PSCustomObject]@{
+                        SiteUrl = $Url
+                        Status = "Error: $_"
+                    }
+                }
+            }
+        }
+        $results += $result
+    }
+
+    # Export results to CSV
+    $results | Export-Csv -Path $OutputCsvPath -NoTypeInformation
+
+} catch {
+    $currentTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $errorMessage = "$currentTime - Error: $($_.Exception.Message)"
+    $errorMessage | Out-File -Append -FilePath $ErrorLogPath
+
+    Write-Host $errorMessage
+}

@@ -1,0 +1,63 @@
+# Connect to Exchange Online PowerShell
+Connect-ExchangeOnline -UserPrincipalName sharepoint.admin6@infoblox.com -ShowProgress $true
+
+# Define CSV file paths
+$inputCsvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\testing.csv"
+$outputCsvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\22052024removeuserexportdata.csv"
+
+# Import CSV file
+$groups = Import-Csv -Path $inputCsvFilePath
+
+# Create an array to store the report data
+$report = @()
+
+# Iterate over each group in the CSV file
+foreach ($group in $groups) {
+    # Define the group name
+    $groupName = $group.GroupName
+
+    try {
+        # Get group information
+        $groupInfo = Get-UnifiedGroup -Identity $groupName -ErrorAction Stop
+
+        # Output the primary email ID of the group
+        Write-Host "Group Title: $($groupInfo.DisplayName), Primary Email ID: $($groupInfo.PrimarySmtpAddress)"
+
+        # Define the member's email address to remove
+        $memberToRemove = "sharepoint.admin6@infoblox.com"
+
+        # Remove the member from the group as owner
+        Remove-UnifiedGroupLinks -Identity $groupInfo.PrimarySmtpAddress -LinkType Owner -Links $memberToRemove -Confirm:$false
+        Write-Host "Owner '$memberToRemove' removed successfully from group '$groupName'." -ForegroundColor Green
+
+        # Remove the member from the group as member
+        Remove-UnifiedGroupLinks -Identity $groupInfo.PrimarySmtpAddress -LinkType Member -Links $memberToRemove -Confirm:$false
+        Write-Host "Member '$memberToRemove' removed successfully from group '$groupName'." -ForegroundColor Yellow
+
+        # Add success result to the report
+        $report += [PSCustomObject]@{
+            GroupName        = $groupName
+            DisplayName      = $groupInfo.DisplayName
+            PrimarySmtpAddress = $groupInfo.PrimarySmtpAddress
+            Status           = "Success"
+            Message          = "Owner and member removed successfully"
+            memberToRemove = "sharepoint.admin6@infoblox.com"
+        }
+    } catch {
+        Write-Host "Error occurred while processing group '$groupName': $_" -ForegroundColor Red
+
+        # Add error result to the report
+        $report += [PSCustomObject]@{
+            GroupName        = $groupName
+            DisplayName      = $null
+            PrimarySmtpAddress = $null
+            Status           = "Error"
+            Message          = $_.Exception.Message
+        }
+    }
+}
+
+# Export the report to a CSV file
+$report | Export-Csv -Path $outputCsvFilePath -NoTypeInformation -Force
+
+Write-Host "Report has been exported to $outputCsvFilePath"

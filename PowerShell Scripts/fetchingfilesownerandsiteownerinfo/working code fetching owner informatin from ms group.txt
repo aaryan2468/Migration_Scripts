@@ -1,0 +1,91 @@
+# Define path to CSV file containing group information
+$csvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\allwavesownersdata.csv"
+
+# Path to export the final CSV with owner information and group status
+$exportFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\allwavesownersdataexport.csv"
+
+# Import necessary modules
+Import-Module ExchangeOnlineManagement -Force
+Import-Module Microsoft.Online.SharePoint.PowerShell -DisableNameChecking -Force
+
+# Provide your credentials securely
+$credential = Get-Credential
+
+# Connect to Exchange Online securely using saved credentials
+Connect-ExchangeOnline -Credential $credential
+
+# Logging function
+function Log-Message {
+    param(
+        [string]$Message,
+        [string]$Severity
+    )
+    $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Host "[$TimeStamp][$Severity] $Message"
+}
+
+# Read CSV file
+$groupInfo = Import-Csv -Path $csvFilePath
+
+# Initialize array to store group owners' information
+$groupsOwner = @()
+
+# Iterate through each row in the CSV data
+foreach ($group in $groupInfo) {
+    # Extract group information
+    $groupName = $group.GroupName
+    $url = $group.SiteURL
+    Log-Message "Processing group: $groupName" "INFO"
+
+    # Try to retrieve group owners
+    try {
+        $groupOwners = Get-UnifiedGroupLinks -Identity $groupName -LinkType Owners
+
+        if ($groupOwners) {
+            foreach ($owner in $groupOwners) {
+                # Capture owner details along with group status
+                $ownerInfo = [PSCustomObject]@{
+                    GroupName    = $groupName
+                    Owner        = $owner.PrimarySmtpAddress
+                    OwnerName    = $owner.DisplayName
+                    Url          = $url
+                    GroupStatus  = "Found"
+                }
+                $groupsOwner += $ownerInfo
+                Log-Message "Owner found: $($owner.PrimarySmtpAddress)" "INFO"
+            }
+        } else {
+            # If no owners were found, log the group with no owner
+            $noOwnerInfo = [PSCustomObject]@{
+                GroupName    = $groupName
+                Owner        = "N/A"
+                OwnerName    = "N/A"
+                Url          = $url
+                GroupStatus  = "No Owners Found"
+            }
+            $groupsOwner += $noOwnerInfo
+            Log-Message "No owners found for group: $groupName" "WARNING"
+        }
+    }
+    catch {
+        # If there's an error (e.g., group not found), log that
+        Log-Message "Error retrieving owners for group: $groupName. Error: $_" "ERROR"
+
+        $errorInfo = [PSCustomObject]@{
+            GroupName    = $groupName
+            Owner        = "N/A"
+            OwnerName    = "N/A"
+            Url          = $url
+            GroupStatus  = "Group Not Found"
+        }
+        $groupsOwner += $errorInfo
+    }
+}
+
+# Export the owner information and group statuses to a CSV file
+$groupsOwner | Export-Csv -Path $exportFilePath -NoTypeInformation
+
+Log-Message "Owner information and group statuses export completed. Exported to $exportFilePath" "INFO"
+
+# Disconnect from Exchange Online
+Disconnect-ExchangeOnline -Confirm:$false
