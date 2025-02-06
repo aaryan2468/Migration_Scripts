@@ -1,0 +1,127 @@
+# Define CSV file path
+$csvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Defaultpermisions.csv"
+
+# Define CSV file path for output
+$outputCsvFilePath = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\testingdefaultpermissionsexport.csv"
+
+# Install and Import required modules
+Install-Module -Name SharePointPnPPowerShellOnline -Force -AllowClobber -Scope CurrentUser -Repository PSGallery
+Import-Module SharePointPnPPowerShellOnline -DisableNameChecking
+
+# Prompt for credentials
+$credentials = Get-Credential
+
+# Read CSV file
+$data = Import-Csv -Path $csvFilePath
+
+# Initialize an array to store the output data
+$outputData = @()
+
+# Iterate through each row in the CSV
+foreach ($row in $data) {
+    try {
+        # Extract site URL, email, and permission from the current row
+        $siteUrl = $row.Sites
+        $email = $row.Email
+        $permission = $row.Permission
+
+        # Connect to SharePoint Online using provided credentials
+        Connect-PnPOnline -Url $siteUrl -Credentials $credentials -ErrorAction Stop
+
+        # Get all groups in the site
+        $groups = Get-PnPGroup
+
+        # Find the Members group and exclude viewers from it
+        $membersGroup = $groups | Where-Object { $_.Title -like "*Members*" -and $permission.ToLower() -ne "commenter" -and $permission.ToLower() -ne "reader" }
+
+        # If Members group is found and the permission is not "viewer", add user to it based on permission
+        if ($membersGroup) {
+            $permissionText = switch ($permission.ToLower()) {
+                "organizer" { "organizer" }
+                "fileorganizer" { "file organizer" }
+                "writer" { "writer" }
+                default {
+                    # Write-Host "Unknown permission '$permission' for user $email on site $siteUrl" -ForegroundColor Yellow
+                    continue
+                }
+            }
+
+            # Add user to Members group without sending welcome email
+            Start-Sleep -Seconds 2
+            Add-PnPUserToGroup -LoginName $email -Identity $membersGroup -ErrorAction Stop
+            Write-Host "User $email added to group Members on site $siteUrl with $permissionText permission" -ForegroundColor Green
+
+            # Collect data for output
+            $outputRow = [PSCustomObject]@{
+                SiteUrl = $siteUrl
+                Email = $email
+                Permission = $permissionText
+                Status = "Success"
+            }
+            $outputData += $outputRow
+        } elseif ($permission.ToLower() -eq "commenter" -or $permission.ToLower() -eq "reader") {
+            # If permission is "viewer" or "writer" and Members group doesn't exist or is not applicable, add user to Visitors group
+            $visitorsGroup = $groups | Where-Object { $_.Title -like "*Visitors*" }
+
+            # If Visitors group is found, add user to it
+            if ($visitorsGroup) {
+                # Add user to Visitors group without sending welcome email
+                Start-Sleep -Seconds 2
+                Add-PnPUserToGroup -LoginName $email -Identity $visitorsGroup  -ErrorAction Stop
+                Write-Host "User $email added to group Visitors on site $siteUrl" -ForegroundColor Yellow
+
+                # Collect data for output
+                $outputRow = [PSCustomObject]@{
+                    SiteUrl = $siteUrl
+                    Email = $email
+                    Permission = "Visitor"
+                    Status = "Success"
+                }
+                $outputData += $outputRow
+            } else {
+                Write-Host "Visitors group not found in site $siteUrl" -ForegroundColor Gray
+
+                # Collect data for output
+                $outputRow = [PSCustomObject]@{
+                    SiteUrl = $siteUrl
+                    Email = $email
+                    Permission = $permission
+                    Status = "Error: Visitors group not found"
+                }
+                $outputData += $outputRow
+            }
+        } else {
+            Write-Host "Members group not found in site $siteUrl or invalid permission specified: $permission" -ForegroundColor Red
+
+            # Collect data for output
+            $outputRow = [PSCustomObject]@{
+                SiteUrl = $siteUrl
+                Email = $email
+                Permission = $permission
+                Status = "Error: Members group not found or invalid permission specified"
+            }
+            $outputData += $outputRow
+        }
+    }
+    catch {
+        Write-Host "Error processing row: $_" -ForegroundColor Red
+
+        # Collect data for output
+        $outputRow = [PSCustomObject]@{
+            SiteUrl = $siteUrl
+            Email = $email
+            Permission = $permission
+            Status = "Error: $_"
+        }
+        $outputData += $outputRow
+    }
+    finally {
+        # Disconnect from SharePoint Online
+        Disconnect-PnPOnline -ErrorAction SilentlyContinue
+    }
+}
+
+# Export output data to CSV
+$outputData | Export-Csv -Path $outputCsvFilePath -NoTypeInformation
+
+Write-Host "Output exported to $outputCsvFilePath" -ForegroundColor Green

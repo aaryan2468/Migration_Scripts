@@ -1,0 +1,54 @@
+# Import CSV file containing group titles
+$data = Import-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\Wave3ShareddrivesProductStrategy.csv"
+
+# Import necessary modules
+Import-Module ExchangeOnlineManagement -Force # Assuming you are working with Exchange Online
+
+# Provide your credentials securely
+$credential = Get-Credential
+
+# Connect to Exchange Online
+Connect-ExchangeOnline -Credential $credential
+
+# Define the date from which you want to retrieve the groups
+$StartDate = Get-Date "28/04/2024"
+
+# Prepare a list to store the results
+$Results = @()
+
+# Loop through each row in the CSV data
+foreach ($row in $data) {
+    # Extract group title from the CSV row
+    $GroupTitle = $row.GroupTitle
+
+    # Check if the Microsoft 365 group exists and was created after the specified date
+    $Group = Get-UnifiedGroup -Identity $GroupTitle -ErrorAction SilentlyContinue
+    if ($Group -ne $null -and $Group.WhenCreated -gt $StartDate) {
+        Write-Host "Microsoft 365 group '$GroupTitle' exists and was created after April 28, 2024."
+        Write-Host "Creation Date: $($Group.WhenCreated)"
+        Write-Host ""
+
+        # Get the owners of the group
+        $Owners = Get-UnifiedGroupLinks -Identity $GroupTitle -LinkType Owners -ErrorAction SilentlyContinue
+        $Groups="Microsoft 365 group '$GroupTitle' exists and was created after April 28, 2024."
+
+        # Prepare owner names and owner count
+        $OwnerNames = $Owners.DisplayName -join "; "
+        $OwnerCount = $Owners.Count
+
+        # Add the result to the list
+        $Results += [PSCustomObject]@{
+            GroupTitle    = $GroupTitle
+            CreationDate  = $Group.WhenCreated
+            OwnerNames    = $OwnerNames
+            OwnerCount    = $OwnerCount
+            Creation=$Groups
+        }
+    }
+}
+
+# Export the results to a CSV file
+$Results | Export-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\GroupCreationResultswave3.csv" -NoTypeInformation
+
+# Disconnect from Exchange Online session
+Disconnect-ExchangeOnline -Confirm:$false

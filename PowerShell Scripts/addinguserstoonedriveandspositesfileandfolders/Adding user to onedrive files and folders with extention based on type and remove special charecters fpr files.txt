@@ -1,0 +1,176 @@
+# Config Variables
+$SiteURL = "https://infoblox-my.sharepoint.com/personal/"
+$CSVFile = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\testing.csv"
+$OutputCSVFile = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\fileschecking.csv"
+
+# Check if the current user has permission to access the CSV file
+if (-not (Test-Path $CSVFile)) {
+    Write-Host "CSV file not found: $CSVFile"
+    return
+}
+
+if (-not (Get-Module -Name SharePointPnPPowerShellOnline -ListAvailable)) {
+    Install-Module SharePointPnPPowerShellOnline -Scope CurrentUser -Force
+}
+
+Import-Module SharePointPnPPowerShellOnline -DisableNameChecking
+
+$previousDriveOwner = ""
+$PermissionResults = @()
+
+try {
+    $CSVData = Import-CSV $CSVFile
+
+    foreach ($Row in $CSVData) {
+        try {
+            $SourceFolderPath = $Row.Path -replace "#", "-" -replace "My Drive","" -replace "SharedWithMe","" -replace "Orphans",""-replace ".com","-com"
+            $OwnerEmailID = $Row.DriveOwner
+                 $MimeType=$Row.type
+            $ListName = "Documents"
+            $ListNames = "/Documents/G Data"
+            $UserAccount = "c:0-.f|rolemanager|spo-grid-all-users/ccf6dc4a-9fe9-4c20-85a6-46d2709e8435"
+            $PermissionLevel = $Row.permission
+
+            # Check the permission level and set the role accordingly
+            $Role = switch ($PermissionLevel) {
+                "Viewer" { 'Read' }
+                "commenter" { 'Read' }
+                "Editor" { 'Edit' }
+                "owner" { 'Full Control' }
+                default { 'Read' }
+            }
+
+            # Check if OwnerEmailID is empty or null
+            if ([string]::IsNullOrEmpty($OwnerEmailID)) {
+                Write-Host "Owner Email ID is empty for path: $SourceFolderPath" -ForegroundColor Yellow
+                continue
+            }
+
+            # Get File Extension
+            $extension = switch ($Row.type) {
+                "application/vnd.google-apps.document" { ".docx" }
+                "application/vnd.google-apps.spreadsheet" { ".xlsx" }
+                "application/vnd.google-apps.presentation" { ".pptx" }
+                "application/pdf" { ".pdf" }
+                "image/jpeg" { ".jpeg" }
+                "image/png" { ".png" }
+                "video/mp4" { ".mp4" }
+                "application/vnd.visio" { ".vsd" }
+                "application/vnd.ms-visio.viewer" { ".vsdx" }
+                "application/vnd.jgraph.mxfile" { ".drawio" }
+                "text/csv" { ".csv" }
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document" { ".docx" }
+                "application/vnd.google-apps.folder" { $null } # Folder, no extension
+                default { "" }
+            }
+
+            # Construct file name with extension
+            $FileName = $Row.Name + $extension
+
+            # Connect to OneDrive if the owner has changed or if it's the first iteration
+            if ($previousDriveOwner -ne $OwnerEmailID) {
+                Write-Host "Connecting to OneDrive for $OwnerEmailID..." -ForegroundColor Yellow
+                $OneDrivePath = $OwnerEmailID.Replace('@', '_').Replace('.', '_')
+                $OneDriveUrl = $SiteURL + $OneDrivePath
+                Connect-PnPOnline -Url $OneDriveUrl -UseWebLogin
+                $previousDriveOwner = $OwnerEmailID
+            }
+
+            # Construct relative URL for the item
+            $lastSlashIndex = $SourceFolderPath.LastIndexOf("/")
+            $fileName = $SourceFolderPath.Substring($lastSlashIndex + 1)
+            $filePath = $SourceFolderPath.Substring(0, $lastSlashIndex + 1)
+
+            # Check if the file name contains special characters
+            if ($fileName -match "[\(\&\#\:\*]") {
+                $fileName = $fileName -replace "[\(\&\#\:\*]", "-"
+            }
+
+            # Construct full URL for the item
+            $ItemRelativeURL = "/Documents/G Data$filePath$fileName$extension"
+            $OneDriveItemURL = $OneDriveUrl + $ItemRelativeURL
+
+            if ($Row.type -eq "application/vnd.google-apps.folder") {
+                $ItemType = "Folder"
+                Write-Host "Processing folder: $OneDriveItemURL" -ForegroundColor Yellow
+            } else {
+                $ItemType = "File"
+                Write-Host "Processing file: $OneDriveItemURL" -ForegroundColor Green
+            }
+
+            # Check if the item is a file or folder based on its type
+            if ($Row.type -eq "application/vnd.google-apps.folder") {
+                # It's a folder
+                $Item = Get-PnPFolder -Url $ItemRelativeURL
+                if ($Item -eq $null) {
+                    Write-Host "Folder not found at $ItemRelativeURL" -ForegroundColor Red
+                    $PermissionResults += [PSCustomObject]@{
+                        ItemPath = $Row.Path
+                        ItemType = "Folder"
+                        MimeType = $Row.type
+                        Permission = $PermissionLevel
+                        PermissionGranted = "No"
+                        ErrorMessage = "Folder not found"
+                        OneDriveUrl = $OneDriveItemURL
+                        DriveOwner = $OwnerEmailID
+                        User = $UserAccount
+                    }
+                    continue
+                }
+            } else {
+                # It's a file
+                $Item = Get-PnPFile -Url $ItemRelativeURL
+                if ($Item -eq $null) {
+                    Write-Host "File not found at $ItemRelativeURL" -ForegroundColor Red
+                    $PermissionResults += [PSCustomObject]@{
+                        ItemPath = $Row.Path
+                        ItemType = "File"
+                        MimeType = $Row.type
+                        Permission = $PermissionLevel
+                        PermissionGranted = "No"
+                        ErrorMessage = "File not found"
+                        OneDriveUrl = $OneDriveItemURL
+                        DriveOwner = $OwnerEmailID
+                        User = $UserAccount
+                    }
+                    continue
+                }
+            }
+
+            # Grant permission to the item
+            Set-PnPListItemPermission -List $ListName -Identity $Item.ListItemAllFields -User $UserAccount -AddRole $Role
+            $PermissionResults += [PSCustomObject]@{
+                ItemPath = $Row.Path
+                ItemType = if ($Row.type -eq "application/vnd.google-apps.folder") { "Folder" } else { "File" }
+                Permission = $PermissionLevel
+                PermissionGranted = "Yes"
+                MimeType = $Row.type
+                OneDriveUrl = $OneDriveItemURL
+                DriveOwner = $OwnerEmailID
+                User = $UserAccount
+            }
+            Write-Host "$ItemType - permission $Role granted to $UserAccount for $ItemRelativeURL" -ForegroundColor Green
+
+        } catch {
+            Write-Host "Error: $_" -ForegroundColor Red
+            $PermissionResults += [PSCustomObject]@{
+                ItemPath = $Row.Path
+                ItemType = if ($Row.type -eq "application/vnd.google-apps.folder") { "Folder" } else { "File" }
+                Permission = $PermissionLevel
+                MimeType = $Row.type
+                PermissionGranted = "No"
+                ErrorMessage = $_.Exception.Message
+                DriveOwner = $OwnerEmailID
+                User = $UserAccount
+            }
+        }
+    }
+
+    # Export the permission results to CSV
+    Write-Host "Exporting permission results to CSV..." -ForegroundColor Yellow
+    $PermissionResults | Export-Csv -Path $OutputCSVFile -NoTypeInformation -Force
+    Write-Host "Permission results exported to $OutputCSVFile" -ForegroundColor Cyan
+
+} catch {
+    Write-Host "Error: $_" -ForegroundColor Red
+}

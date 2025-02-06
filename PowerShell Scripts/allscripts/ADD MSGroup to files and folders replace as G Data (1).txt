@@ -1,0 +1,137 @@
+# Config Variables
+$SiteURL = "https://infoblox-my.sharepoint.com/personal/"
+$CSVFile = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\UnableFindPath.csv"
+$OutputCSVFile = "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\30042024test"
+
+# Check if the CSV file exists
+if (-not (Test-Path $CSVFile)) {
+    Write-Host "CSV file not found: $CSVFile" -ForegroundColor Red
+    Write-Host "Please make sure the CSV file exists at the specified path."
+    return
+}
+
+if (-not (Get-Module -Name SharePointPnPPowerShellOnline -ListAvailable)) {
+    Install-Module SharePointPnPPowerShellOnline -Scope CurrentUser -Force
+}
+
+Import-Module SharePointPnPPowerShellOnline -DisableNameChecking
+
+$previousDriveOwner = ""
+$PermissionResults = @()
+
+try {
+    $CSVData = Import-CSV $CSVFile
+
+    foreach ($Row in $CSVData) {
+        try {
+            $SourceFolderPath = $Row.Path -replace "My Drive","G Data" -replace "SharedWithMe","G Data" -replace "Orphans","G Data"
+            $OwnerEmailID = $Row.DriveOwner
+            $ListName = "Documents"
+            $ListNames = "/Documents/"
+            $UserAccount = "c:0-.f|rolemanager|spo-grid-all-users/ccf6dc4a-9fe9-4c20-85a6-46d2709e8435" 
+            $PermissionLevel = $Row.Permission
+
+            # Check if OwnerEmailID is empty or null
+            if ([string]::IsNullOrEmpty($OwnerEmailID)) {
+                Write-Host "Owner Email ID is empty for path: $SourceFolderPath"
+                continue
+            }
+
+            if ($previousDriveOwner -ne $OwnerEmailID) {
+                $OneDrivePath = $OwnerEmailID.Replace('@', '_').Replace('.', '_')
+                $OneDriveUrl = $SiteURL + $OneDrivePath
+                Connect-PnPOnline -Url $OneDriveUrl -UseWebLogin
+                $previousDriveOwner = $OwnerEmailID
+            }
+
+            # Construct relative URL for the item
+            $ItemRelativeURL = $ListNames + $SourceFolderPath
+            $OneDriveItemURL = $OneDriveUrl + $ItemRelativeURL
+
+            Write-Host "OneDrive path: $OneDriveItemURL" -ForegroundColor Cyan
+
+            # Check the permission level and set the role accordingly
+            switch ($PermissionLevel) {
+                "Viewer" { $Role = 'Read' }
+                "Commenter" { $Role = 'Read' }
+                "Editor" { $Role = 'Edit' }
+                default { $Role = 'Read' }
+            }
+
+            # Check if the item is a file or folder
+            if ($SourceFolderPath -match "\.\w+$") {
+                # It's a file
+                $Item = Get-PnPFile -Url $ItemRelativeURL
+                if ($Item -eq $null) {
+                    Write-Host "File not found at $ItemRelativeURL" -ForegroundColor Red
+                    $PermissionResults += [PSCustomObject]@{
+                        ItemPath = $Row.Path
+                        ItemType = "File"
+                        PermissionLevel = $PermissionLevel  # Add this line to capture the permission level
+                        PermissionGranted = "No"
+                        ErrorMessage = "File not found"
+                        OnedriveUrl = $OneDriveItemURL
+                        DriveOwner=$OwnerEmailID
+                    }
+                    continue
+                } else {
+                    Set-PnPListItemPermission -List $ListName -Identity $Item.ListItemAllFields -User $UserAccount -AddRole $Role
+                    $PermissionResults += [PSCustomObject]@{
+                        ItemPath = $Row.Path
+                        ItemType = "File"
+                        PermissionLevel = $PermissionLevel  # Add this line to capture the permission level
+                        PermissionGranted = "Yes"
+                        OnedriveUrl = $OneDriveItemURL
+                        DriveOwner=$OwnerEmailID
+                    }
+                    Write-Host "File-$UserAccount-$Role permission granted to file: $ItemRelativeURL" -ForegroundColor Yellow
+                }
+            } else {
+                # It's a folder
+                $Item = Get-PnPFolder -Url $ItemRelativeURL
+                if ($Item -eq $null) {
+                    Write-Host "Folder not found at $ItemRelativeURL" -ForegroundColor Red
+                    $PermissionResults += [PSCustomObject]@{
+                        ItemPath = $Row.Path
+                        ItemType = "Folder"
+                        PermissionLevel = $PermissionLevel  # Add this line to capture the permission level
+                        PermissionGranted = "No"
+                        ErrorMessage = "Folder not found"
+                        OnedriveUrl = $OneDriveItemURL
+                        DriveOwner=$OwnerEmailID
+                    }
+                    continue
+                } else {
+                    Set-PnPListItemPermission -List $ListName -Identity $Item.ListItemAllFields -User $UserAccount -AddRole $Role
+                    $PermissionResults += [PSCustomObject]@{
+                        ItemPath = $Row.Path
+                        ItemType = "Folder"
+                        PermissionLevel = $PermissionLevel  # Add this line to capture the permission level
+                        PermissionGranted = "Yes"
+                        OnedriveUrl = $OneDriveItemURL
+                        DriveOwner=$OwnerEmailID
+                    }
+                    Write-Host "Folder-$UserAccount-$Role permission granted to folder: $ItemRelativeURL" -ForegroundColor Green
+                }
+            }
+        } catch {
+            Write-Host "Error: $_"
+            $PermissionResults += [PSCustomObject]@{
+                ItemPath = $Row.Path
+                ItemType = "Error"
+                PermissionLevel = $PermissionLevel  # Add this line to capture the permission level
+                PermissionGranted = "No"
+                ErrorMessage = $_.Exception.Message
+                Foldernotfound = $ItemRelativeURL
+                Filenotfound = $OneDriveItemURL
+                DriveOwner=$OwnerEmailID
+            }
+        }
+    }
+
+    # Export the permission results to CSV
+    $PermissionResults | Export-Csv -Path $OutputCSVFile -NoTypeInformation -Force
+    Write-Host "Permission results exported to $OutputCSVFile" -ForegroundColor Cyan
+} catch {
+    Write-Host "Error: $_"
+}

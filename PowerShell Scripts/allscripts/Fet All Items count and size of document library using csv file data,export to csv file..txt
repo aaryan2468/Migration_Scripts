@@ -1,0 +1,127 @@
+# Import the SharePoint Online PowerShell module
+Import-Module Microsoft.Online.SharePoint.PowerShell -DisableNameChecking
+
+# Function to get all items count from a document library
+function Get-DocumentLibraryItemCount {
+    param (
+        [string]$SiteURL,
+        [string]$DocumentLibraryName,
+        [string]$Username,
+        [string]$Password
+    )
+
+    # Connect to the site
+    $Cred = New-Object Microsoft.SharePoint.Client.SharePointOnlineCredentials($Username, (ConvertTo-SecureString $Password -AsPlainText -Force))
+    $Ctx = New-Object Microsoft.SharePoint.Client.ClientContext($SiteURL)
+    $Ctx.Credentials = $Cred
+
+    try {
+        # Get the document library
+        $List = $Ctx.Web.Lists.GetByTitle($DocumentLibraryName)
+        $Ctx.Load($List)
+        $Ctx.ExecuteQuery()
+
+        # Get the count of items
+        $ItemCount = $List.ItemCount
+        Write-Host "Document Library: $SiteURL/$($List.Title) - Item Count: $ItemCount" -ForegroundColor Green
+        
+        # Output the data
+        return [PSCustomObject]@{
+            SiteURL = $SiteURL
+            DocumentLibraryName = $List.Title
+            ItemCount = $ItemCount
+            SizeGB = ""
+        }
+    } 
+    catch {
+        Write-Host "Error getting item count for library '$DocumentLibraryName' on site '$SiteURL': $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+# Function to calculate the size of SharePoint Online items in a document library
+function Get-SPOnlineDocumentLibrarySize {
+    param (
+        [string]$SiteUrl,
+        [string]$ListName,
+        [pscredential]$Credentials
+    )
+
+    # Connect to SharePoint Online using provided credentials
+    Connect-PnPOnline -Url $SiteUrl -Credentials $Credentials
+
+    try {
+        # Initialize a variable to store the total size
+        $totalSizeGB = 0
+
+        # Retrieve all items from the document library in batches of 2000
+        $listItems = Get-PnPListItem -List $ListName -PageSize 2000 -ScriptBlock {
+            Param($items)
+            $items.Context.ExecuteQuery()
+        }
+
+        # Loop through each item
+        foreach ($item in $listItems) {
+            # Get the file size in bytes
+            $fileSizeBytes = $item.FieldValues.File_x0020_Size
+
+            # Convert bytes to gigabytes
+            $fileSizeGB = $fileSizeBytes / 1GB
+
+            # Add to the total size
+            $totalSizeGB += $fileSizeGB
+        }
+
+        # Display the total size
+        Write-Host "Total size of items in '$ListName' on '$SiteUrl': $totalSizeGB GB"-ForegroundColor Yellow
+        
+        # Output the data
+        return [PSCustomObject]@{
+            SiteURL = $SiteUrl
+            DocumentLibraryName = $ListName
+            ItemCount = ""
+            SizeGB = $totalSizeGB
+        }
+    }
+    catch {
+        Write-Host "Error getting size for library '$ListName' on site '$SiteUrl': $($_.Exception.Message)" -ForegroundColor Red
+    }
+    finally {
+        # Disconnect from SharePoint Online
+        Disconnect-PnPOnline
+    }
+}
+
+# Read CSV file
+$CSVData = Import-Csv "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\export to csvfile.csv"
+
+# Ask for credentials once
+$credentials = Get-Credential
+
+# Array to store results
+$results = @()
+
+# Loop through each row in the CSV
+foreach ($Row in $CSVData) {
+    # Extract data from CSV
+    $SiteURL = $Row.SiteURL
+    $DocumentLibraryName = $Row.DocumentLibraryName
+    $Username = "sharepoint.admin6@infoblox.com"
+    $Password = "Peddaupparapalli@3636"
+
+    # Call function to get item count
+    $itemCountResult = Get-DocumentLibraryItemCount -SiteURL $SiteURL -DocumentLibraryName $DocumentLibraryName -Username $Username -Password $Password
+
+    # Call function to get size
+    $sizeResult = Get-SPOnlineDocumentLibrarySize -SiteUrl $SiteURL -ListName $DocumentLibraryName -Credentials $credentials
+
+    # Add sum to the results
+    $results += [PSCustomObject]@{
+        SiteURL = $SiteURL
+        DocumentLibraryName = $DocumentLibraryName
+        ItemCount = $itemCountResult.ItemCount
+        SizeGB = $sizeResult.SizeGB
+    }
+}
+# Export results to CSV
+$results | Export-Csv -Path "C:\Users\vpoojari\OneDrive - Infoblox Inc\Desktop\ExportedData.csv" -NoTypeInformation
+Write-Host " Data Exported To Csv File" -ForegroundColor Green
